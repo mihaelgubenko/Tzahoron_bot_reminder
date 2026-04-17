@@ -14,7 +14,8 @@ try {
 }
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
+const SESSION_SECRET = process.env.SESSION_SECRET || 'liora-admin-secret-key-2024';
 
 /** Рядом с .exe (pkg) или с server.js — папка leads и опциональный config.js */
 function getAppDataDir() {
@@ -65,7 +66,7 @@ try {
 
 // Session configuration
 app.use(session({
-    secret: 'liora-admin-secret-key-2024',
+    secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -80,9 +81,15 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(__dirname)); // project root or pkg snapshot
 
-// Admin credentials
-const ADMIN_USERNAME = 'admin';
-const ADMIN_PASSWORD = 'admin123';
+// Admin credentials (allow override via environment variables)
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+
+// Telegram config from environment variables (preferred in cloud)
+const telegramEnvConfig = {
+    botToken: process.env.TELEGRAM_BOT_TOKEN || null,
+    chatId: process.env.TELEGRAM_CHAT_ID || null
+};
 
 // Middleware to check authentication
 function requireAuth(req, res, next) {
@@ -164,7 +171,11 @@ app.post('/api/contact', (req, res) => {
         }
         
         // Send Telegram notification to admin (if configured)
-        if (emailConfig && emailConfig.telegram) {
+        const hasTelegramConfig =
+            (emailConfig && emailConfig.telegram && emailConfig.telegram.botToken && emailConfig.telegram.chatId) ||
+            (telegramEnvConfig.botToken && telegramEnvConfig.chatId);
+
+        if (hasTelegramConfig) {
             sendTelegramNotification(lead).catch(err => {
                 console.error('❌ Failed to send Telegram notification:', err.message);
             });
@@ -283,7 +294,10 @@ async function sendEmailNotification(lead) {
 
 // Function to send Telegram notification
 async function sendTelegramNotification(lead) {
-    if (!emailConfig || !emailConfig.telegram || !emailConfig.telegram.botToken || !emailConfig.telegram.chatId) {
+    const botToken = telegramEnvConfig.botToken || (emailConfig && emailConfig.telegram && emailConfig.telegram.botToken);
+    const chatId = telegramEnvConfig.chatId || (emailConfig && emailConfig.telegram && emailConfig.telegram.chatId);
+
+    if (!botToken || !chatId) {
         return;
     }
 
@@ -304,11 +318,9 @@ async function sendTelegramNotification(lead) {
 
 💡 Пожалуйста, свяжитесь с родителем в удобное для него время.`;
 
-    const url = `https://api.telegram.org/bot${emailConfig.telegram.botToken}/sendMessage`;
-    
     return new Promise((resolve, reject) => {
         const postData = JSON.stringify({
-            chat_id: emailConfig.telegram.chatId,
+            chat_id: chatId,
             text: message,
             parse_mode: 'Markdown'
         });
@@ -316,7 +328,7 @@ async function sendTelegramNotification(lead) {
         const options = {
             hostname: 'api.telegram.org',
             port: 443,
-            path: `/bot${emailConfig.telegram.botToken}/sendMessage`,
+            path: `/bot${botToken}/sendMessage`,
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -333,7 +345,7 @@ async function sendTelegramNotification(lead) {
                 try {
                     const result = JSON.parse(data);
                     if (result.ok) {
-                        console.log(`📱 Telegram notification sent to chat ${emailConfig.telegram.chatId}`);
+                        console.log(`📱 Telegram notification sent to chat ${chatId}`);
                         resolve(result);
                     } else {
                         reject(new Error(result.description || 'Unknown error'));
@@ -457,10 +469,10 @@ app.listen(PORT, () => {
         console.log(`📧 Email notifications: DISABLED (configure config.js)`);
     }
     
-    if (emailConfig && emailConfig.telegram && emailConfig.telegram.botToken) {
+    if ((emailConfig && emailConfig.telegram && emailConfig.telegram.botToken) || telegramEnvConfig.botToken) {
         console.log(`📱 Telegram notifications: ENABLED`);
     } else {
-        console.log(`📱 Telegram notifications: DISABLED (configure config.js)`);
+        console.log(`📱 Telegram notifications: DISABLED (configure config.js or env vars)`);
     }
     
     console.log(`🔐 Admin panel: http://localhost:${PORT}/admin.html`);
