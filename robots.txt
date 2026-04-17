@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+
+# Sitemap location
+Sitemap: https://liora-kindergarten.com/sitemap.xml
+
+# Disallow admin/API routes
+Disallow: /api/
+Disallow: /leads/
+
